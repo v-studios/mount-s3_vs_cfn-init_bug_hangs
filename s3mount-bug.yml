@@ -1,0 +1,165 @@
+Description: Test hang on mount-s3. Use SSM Connect to get access to the EC2.
+
+Parameters:
+  VpcCIDR:
+    Description: IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.192.0.0/16
+  PublicSubnet1CIDR:
+    Description: IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.10.0/24
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    # t2.micro is free tier eligible, t3.micro $0.0104
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+  S3Bucket:
+    Description: name of existing bucket we want to mount
+    Type: String
+    Default: chris-serverless-vmedia
+
+Mappings:
+  AWSInstanceType2Arch:
+    t2.micro:
+      Arch: HVM64
+    t3.micro:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    us-east-1:
+      HVM64: ami-051f7e7f6c2f40dc1 # al2023-ami-2023.1.20230825.0-kernel-6.1-x86_64
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true # need this for SessionManager to Connect
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  NoIngressSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: No ingress rule, use SessionManager Connect instead
+      VpcId: !Ref VPC
+
+  Ec2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile: !Ref RootInstanceProfile
+      ImageId: !FindInMap
+        - AWSRegionArch2AMI
+        - !Ref 'AWS::Region'
+        - !FindInMap
+          - AWSInstanceType2Arch
+          - !Ref InstanceType
+          - Arch
+      InstanceType: !Ref InstanceType
+      SecurityGroupIds:
+        - !Ref NoIngressSecurityGroup
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -x
+          yum update -y aws-cfn-bootstrap
+          cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource Ec2Instance
+    Metadata:
+      AWS::CloudFormation::Init:
+        # Order: packages, groups, users, sources, files, commands, services
+        config:
+          commands:
+            10_install_mount_s3: 
+              command: yum install -y https://s3.amazonaws.com/mountpoint-s3-release/latest/x86_64/mount-s3.rpm
+            91_mount_s3:
+              # BUGBUG This does the mount but never returns, blocking following steps, so do it last:
+              # BUGBUG double-quoting; redirecting stdin, stdio; and running in background did not help.
+              command: !Sub |
+                mkdir /s3
+                echo "About to mount-s3..."
+                mount-s3 --read-only ${S3Bucket} /s3
+                echo "Done with mount-s3.
+            99_zzz:
+              command: |
+                touch /tmp/99_zzz
+                echo "99_zzz Will you ever see me?"
+          # We'd expect the following to fail since we haven't
+          # installed Docker (in packages), but since mount-s3 never
+          # "returns" no services will be attempted.
+          services:
+            sysvinit:
+              docker:
+                enabled: true
+                ensureRunning: true
+
+  RootRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+  RolePolicies:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: root
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        # What IAM privs do we need for Mount S3 and SSM Connect?
+        - Effect: Allow         # Danger, Will Robinson!
+          Action: "*"
+          Resource: "*"
+      Roles:
+      - !Ref RootRole
+  RootInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - !Ref RootRole
