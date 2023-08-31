@@ -117,7 +117,7 @@ Resources:
                 mkdir /s3
                 echo "About to mount-s3..."
                 mount-s3 --read-only ${S3Bucket} /s3
-                echo "Done with mount-s3.
+                echo "Done with mount-s3."
             99_zzz:
               command: |
                 touch /tmp/99_zzz

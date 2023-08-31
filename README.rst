@@ -72,7 +72,7 @@ It also never complains about trying to ``enable`` a ``service`` that
 we haven't installed, so it's not getting that far. We can see that in
 the ``cfn-init/resume_db.json`` file::
 
-  root@ip-10-192-10-136 bin]# python3 -m json.tool /var/lib/cfn-init/resume_db.json
+  [root@ip-10-192-10-118 bin]# python3 -mjson.tool /var/lib/cfn-init/resume_db.json
   {
       "metadata": {
           "AWS::CloudFormation::Init": {
@@ -87,7 +87,7 @@ the ``cfn-init/resume_db.json`` file::
                   },
                   "commands": {
                       "91_mount_s3": {
-                          "command": "mkdir /s3\necho \"About to mount-s3...\"\nmount-s3 --read-only chris-serverless-vmedia /s3\necho \"Donewith mount-s3.\n"
+                          "command": "mkdir /s3\necho \"About to mount-s3...\"\nmount-s3 --read-only chris-serverless-vmedia /s3\necho \"Done with mount-s3.\"\n"
                       },
                       "10_install_mount_s3": {
                           "command": "yum install -y https://s3.amazonaws.com/mountpoint-s3-release/latest/x86_64/mount-s3.rpm"
@@ -119,5 +119,3 @@ Both mountpoints have the same native modes if I ``umount`` them::``
   drwxr-xr-x. 2 root root 6 Aug 31 12:23 /s3
 
 So why is the ``mount-s3`` hanging in ``cfn-init``?
-
-
