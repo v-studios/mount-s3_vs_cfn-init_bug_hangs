@@ -13,10 +13,13 @@ Parameters:
     Description: WebServer EC2 instance type
     Type: String
     # t2.micro is free tier eligible, t3.micro $0.0104
-    Default: t2.micro
+    Default: t3.large
     AllowedValues:
       - t2.micro
       - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
   S3Bucket:
     Description: name of existing bucket we want to mount
     Type: String
@@ -27,6 +30,12 @@ Mappings:
     t2.micro:
       Arch: HVM64
     t3.micro:
+      Arch: HVM64
+    t3.small:
+      Arch: HVM64
+    t3.medium:
+      Arch: HVM64
+    t3.large:
       Arch: HVM64
   AWSRegionArch2AMI:
     us-east-1:
@@ -80,7 +89,7 @@ Resources:
       GroupDescription: No ingress rule, use SessionManager Connect instead
       VpcId: !Ref VPC
 
-  Ec2Instance:
+  Ec2Instance7:
     Type: AWS::EC2::Instance
     Properties:
       IamInstanceProfile: !Ref RootInstanceProfile
@@ -102,14 +111,29 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash -x
           yum update -y aws-cfn-bootstrap
-          cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource Ec2Instance
+          cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource Ec2Instance7
     Metadata:
       AWS::CloudFormation::Init:
         # Order: packages, groups, users, sources, files, commands, services
         config:
           commands:
+            # 10_install_mount_s3_latest_from_source: 
+            #   command: |
+            #     yum -y install fuse fuse-devel cmake3 clang git pkgconfig
+            #     mkdir --parents /src
+            #     cd /src
+            #     #curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+            #     yum -y install rust cargo
+            #     #source "$HOME/.cargo/env"
+            #     git clone --recurse-submodules https://github.com/awslabs/mountpoint-s3.git
+            #     cd mountpoint-s3
+            #     cargo build --release
+            #     cp target/release/mount-s3 /usr/bin/
+            #     mount-s3 --version
             10_install_mount_s3: 
-              command: yum install -y https://s3.amazonaws.com/mountpoint-s3-release/latest/x86_64/mount-s3.rpm
+              command: |
+                yum install -y https://s3.amazonaws.com/mountpoint-s3-release/latest/x86_64/mount-s3.rpm
+                mount-s3 --version
             91_mount_s3:
               # BUGBUG This does the mount but never returns, blocking following steps, so do it last:
               # BUGBUG double-quoting; redirecting stdin, stdio; and running in background did not help.
@@ -122,14 +146,6 @@ Resources:
               command: |
                 touch /tmp/99_zzz
                 echo "99_zzz Will you ever see me?"
-          # We'd expect the following to fail since we haven't
-          # installed Docker (in packages), but since mount-s3 never
-          # "returns" no services will be attempted.
-          services:
-            sysvinit:
-              docker:
-                enabled: true
-                ensureRunning: true
 
   RootRole:
     Type: AWS::IAM::Role
